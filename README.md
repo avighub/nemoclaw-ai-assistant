@@ -124,7 +124,47 @@ openclaw tui
 openclaw agent -m "hello"
 ```
 
-### 5. (Optional) Start Supporting Services
+### 5. (Optional) Telegram Bot Integration
+
+Connect NemoClaw to Telegram for easy messaging:
+
+**During Onboarding:**
+When the installer asks about policy presets, select **only `telegram`**. Skip all others unless you specifically need them:
+
+```
+○ discord     — Not needed
+○ docker      — Not needed
+○ huggingface — Not needed
+○ jira        — Not needed
+○ npm         — Not needed
+○ outlook     — Not needed
+● telegram    — SELECT THIS (for Telegram Bot)
+○ pypi        — Not needed
+○ slack       — Not needed
+```
+
+**Create Telegram Bot:**
+
+1. Open Telegram and start chat with [@BotFather](https://t.me/botfather)
+2. Send `/newbot`
+3. Follow the prompts to name your bot
+4. BotFather gives you a bot token (e.g., `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+
+**Configure NemoClaw:**
+
+```bash
+# Set your bot token
+nemoclaw my-assistant config set telegram_token YOUR_BOT_TOKEN_HERE
+
+# Restart NemoClaw
+nemoclaw my-assistant restart
+```
+
+**Start Chatting:**
+
+Find your bot in Telegram (search by the name you gave it) and start messaging!
+
+### 6. (Optional) Start Supporting Services
 
 ```bash
 # Start Ollama, monitoring, backup runner
@@ -399,6 +439,8 @@ bash scripts/health-check.sh
 2. **SSH in** and run foundational setup: `bash scripts/setup.sh`
 3. **Official NVIDIA installer** runs automatically (handles NemoClaw CLI + onboarding)
 4. **Connect and chat:** `nemoclaw my-assistant connect` → `openclaw tui`
+5. **(Optional) Telegram Bot:** Select during onboarding, then configure token
+6. **(Optional) Supporting services:** Start Ollama, monitoring, backup runner
 
 ## Architecture
 
