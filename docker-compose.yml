@@ -1,0 +1,245 @@
+services:
+  # ========================================================================
+  # OLLAMA - Local LLM Inference (Optional)
+  # ========================================================================
+  # Provides local model inference as alternative/supplement to NVIDIA cloud
+  # Uncomment to enable; requires: OLLAMA_ENABLED=true in .env
+  ollama:
+    image: ollama/ollama:latest
+    container_name: nemoclaw-ollama
+    profiles: ["ollama", "full"]
+    restart: unless-stopped
+    
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      # Optional GPU support (uncomment if your host has GPU)
+      # - CUDA_VISIBLE_DEVICES=0
+    
+    volumes:
+      # Persistent model storage
+      - ollama_models:/root/.ollama
+      - ${MODELS_DIR:-/srv/nemoclaw/models}:/models
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - nemoclaw
+    
+    labels:
+      - "com.nemoclaw.service=ollama"
+
+  # ========================================================================
+  # PROMETHEUS - Metrics Collection (Optional)
+  # ========================================================================
+  # Scrapes metrics from services for monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nemoclaw-prometheus
+    profiles: ["monitoring", "full"]
+    restart: unless-stopped
+    
+    ports:
+      - "9090:9090"
+    
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    
+    environment:
+      - TZ=UTC
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    networks:
+      - nemoclaw
+    
+    labels:
+      - "com.nemoclaw.service=prometheus"
+
+  # ========================================================================
+  # GRAFANA - Visualization Dashboard (Optional)
+  # ========================================================================
+  # Visualizes Prometheus metrics with dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: nemoclaw-grafana
+    profiles: ["monitoring", "full"]
+    restart: unless-stopped
+    
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    
+    depends_on:
+      - prometheus
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    networks:
+      - nemoclaw
+    
+    labels:
+      - "com.nemoclaw.service=grafana"
+
+  # ========================================================================
+  # BACKUP RUNNER - Automated Daily Backups
+  # ========================================================================
+  # Runs backup script on schedule; depends on running nemoclaw services
+  backup-runner:
+    image: alpine:latest
+    container_name: nemoclaw-backup-runner
+    profiles: ["backups", "full"]
+    restart: unless-stopped
+    
+    volumes:
+      - /:/host:ro
+      - ${BACKUP_DIR:-/srv/nemoclaw/backups}:/backups
+      - ${CONFIG_DIR:-/srv/nemoclaw/config}:/config:ro
+      - ${MODELS_DIR:-/srv/nemoclaw/models}:/models:ro
+      - ${LOGS_DIR:-/srv/nemoclaw/logs}:/logs:ro
+      - ./scripts/backup.sh:/backup.sh:ro
+    
+    environment:
+      - BACKUP_DIR=/backups
+      - CONFIG_DIR=/config
+      - MODELS_DIR=/models
+      - LOGS_DIR=/logs
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+    
+    # Daily backup at 02:00 UTC using busybox cron
+    entrypoint: |
+      sh -c 'apk add --no-cache curl tar gzip coreutils
+             echo "0 2 * * * sh /backup.sh" | crontab -
+             crond -f -l 2'
+    
+    networks:
+      - nemoclaw
+    
+    labels:
+      - "com.nemoclaw.service=backup"
+
+  # ========================================================================
+  # NODE EXPORTER - Host Metrics (Optional)
+  # ========================================================================
+  # Exposes system metrics (CPU, memory, disk) for Prometheus
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: nemoclaw-node-exporter
+    profiles: ["monitoring", "full"]
+    restart: unless-stopped
+    
+    ports:
+      - "9100:9100"
+    
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    
+    environment:
+      - NODE_ID=nemoclaw-host
+    
+    networks:
+      - nemoclaw
+    
+    labels:
+      - "com.nemoclaw.service=node-exporter"
+
+  # ========================================================================
+  # CONTAINER EXPORTER - Docker Metrics (Optional)
+  # ========================================================================
+  # Exposes Docker container metrics for Prometheus
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: nemoclaw-cadvisor
+    profiles: ["monitoring", "full"]
+    restart: unless-stopped
+    
+    ports:
+      - "8080:8080"
+    
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    
+    privileged: true
+    
+    networks:
+      - nemoclaw
+    
+    labels:
+      - "com.nemoclaw.service=cadvisor"
+
+networks:
+  nemoclaw:
+    driver: bridge
+    name: nemoclaw
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  # Ollama model cache
+  ollama_models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${MODELS_DIR:-/srv/nemoclaw/models}
+  
+  # Prometheus time-series database
+  prometheus_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/nemoclaw/prometheus
+  
+  # Grafana dashboards and configuration
+  grafana_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/nemoclaw/grafana

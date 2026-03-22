@@ -1,0 +1,80 @@
+# Prometheus Configuration for NemoClaw Monitoring
+# Used by Prometheus service in docker-compose.yml
+
+global:
+  scrape_interval: ${PROMETHEUS_SCRAPE_INTERVAL:-15s}
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'nemoclaw'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files: []
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter (system metrics: CPU, memory, disk)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'host'
+
+  # cAdvisor (Docker container metrics)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    metrics_path: '/metrics'
+
+  # Docker daemon (if available)
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['localhost:9323']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # Ollama metrics (if Ollama is running)
+  - job_name: 'ollama'
+    static_configs:
+      - targets: ['ollama:11434']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # NemoClaw / OpenShell metrics (if exposed)
+  - job_name: 'nemoclaw'
+    static_configs:
+      - targets: ['localhost:9091']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: '/metrics'
+
+  # Service discovery from Docker labels (experimental)
+  - job_name: 'docker-service-discovery'
+    dockersd_configs:
+      - host: unix:///var/run/docker.sock
+        port: 9323
+    relabel_configs:
+      # Only scrape services with label: prometheus=true
+      - source_labels: [__meta_docker_container_label_prometheus]
+        regex: 'true'
+        action: keep
+      # Use container name as job
+      - source_labels: [__meta_docker_container_label_service]
+        target_label: job
+      # Use container name as instance
+      - source_labels: [__meta_docker_container_name]
+        target_label: instance
