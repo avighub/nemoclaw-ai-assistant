@@ -50,17 +50,7 @@ This deployment provides:
 
 ## Quick Start
 
-### 1. Provision Hetzner CX43
-
-In **Hetzner Cloud Console**:
-1. Click **"Create" → Server**
-2. **Image:** Select Ubuntu 22.04 LTS
-3. **Type:** Select CX43 (8 vCPU, 16 GB RAM, 160 GB NVMe)
-4. **SSH Key:** Select your public key
-5. **Location:** Choose nearest to you
-6. Click **"Create & Buy now"**
-
-Wait 2-3 minutes for server to boot, then SSH in:
+### 1. Provision VPS with Linux OS (Ubuntu 22.04 LTS recommended)
 
 ```bash
 ssh root@<instance-ip>
@@ -69,10 +59,6 @@ ssh root@<instance-ip>
 ### 2. Run Foundational Setup
 
 ```bash
-# Create deployment directory
-mkdir -p /root/nemoclaw-deploy
-cd /root/nemoclaw-deploy
-
 # Copy .env configuration
 cp .env.example .env
 nano .env  # Add your NVIDIA_API_KEY (or skip for now)
@@ -96,7 +82,7 @@ bash scripts/setup.sh
 
 **Setup time:** ~5-10 minutes (depending on internet speed)
 
-### 3. Official NVIDIA NemoClaw Installer
+### 3. Official NVIDIA NemoClaw Installer ( skip if you selected "y" during Run NVIDIA installer? prompt)
 
 Once foundational setup completes, the official NVIDIA installer will run:
 

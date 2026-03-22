@@ -120,12 +120,47 @@ load_env() {
     source "$ENV_FILE"
     set -u
     
-    # Validate required variables
-    if [[ -z "${NVIDIA_API_KEY:-}" ]]; then
-        log_warn "NVIDIA_API_KEY not set in .env"
-        log_info "You'll be prompted for it during official NVIDIA installer"
-    fi
-    
+    # Validate NVIDIA_API_KEY — give user 3 attempts if missing or malformed
+    local max_attempts=3
+    local attempt=0
+
+    while true; do
+        if [[ -n "${NVIDIA_API_KEY:-}" && "${NVIDIA_API_KEY}" == nvapi-* ]]; then
+            log_success "NVIDIA_API_KEY looks valid"
+            break
+        fi
+
+        attempt=$((attempt + 1))
+
+        if [[ "${NVIDIA_API_KEY:-}" == "" ]]; then
+            log_warn "NVIDIA_API_KEY is not set in .env"
+        else
+            log_warn "Invalid key: '${NVIDIA_API_KEY}'. Must start with 'nvapi-'"
+        fi
+
+        if [[ $attempt -ge $max_attempts ]]; then
+            log_warn "No valid NVIDIA_API_KEY after $max_attempts attempts — continuing anyway"
+            log_info "You can set it manually in $ENV_FILE and rerun, or enter it during the NVIDIA installer step"
+            break
+        fi
+
+        local remaining=$((max_attempts - attempt))
+        echo -e "${YELLOW}[PROMPT]${NC} Enter your NVIDIA API key (attempt $attempt/$max_attempts, $remaining remaining):"
+        echo -e "         Keys look like: nvapi-xxxxxxxxxxxxxxxxxxxx"
+        read -r -p "         NVIDIA_API_KEY: " input_key
+
+        if [[ -n "$input_key" ]]; then
+            NVIDIA_API_KEY="$input_key"
+            export NVIDIA_API_KEY
+            # Persist into .env so subsequent scripts pick it up
+            if grep -q "^NVIDIA_API_KEY=" "$ENV_FILE" 2>/dev/null; then
+                sed -i "s|^NVIDIA_API_KEY=.*|NVIDIA_API_KEY=${input_key}|" "$ENV_FILE"
+            else
+                echo "NVIDIA_API_KEY=${input_key}" >> "$ENV_FILE"
+            fi
+        fi
+    done
+
     log_success "Loaded configuration from .env"
 }
 
