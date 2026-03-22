@@ -119,6 +119,7 @@ print_destruction_plan() {
 
     echo -e "  ${RED}✗${NC} OpenShell                 — pip3 package + binary"
     echo -e "  ${RED}✗${NC} /srv/nemoclaw/            — config, models, backups, logs"
+    echo -e "  ${RED}✗${NC} ~/.nemoclaw/              — user-level config/state"
     echo -e "  ${RED}✗${NC} Cron jobs                 — backup runner"
     echo -e "  ${RED}✗${NC} nemoclaw user             — system user + home directory"
     echo ""
@@ -217,14 +218,29 @@ remove_docker_resources() {
 
 # Remove persistent data directory
 remove_data_directory() {
-    log_info "Removing /srv/nemoclaw/..."
-    
+    log_info "Removing /srv/nemoclaw/ and ~/.nemoclaw..."
+
     if [[ -d /srv/nemoclaw ]]; then
         rm -rf /srv/nemoclaw
         log_success "Removed /srv/nemoclaw/"
     else
         log_info "  /srv/nemoclaw/ not found (already removed)"
     fi
+
+    # Remove user-level nemoclaw directory (present regardless of mode)
+    local home_dir
+    home_dir="$(eval echo ~root)"
+    if [[ -d "${home_dir}/.nemoclaw" ]]; then
+        rm -rf "${home_dir}/.nemoclaw"
+        log_success "Removed ${home_dir}/.nemoclaw"
+    fi
+    # Also cover any other home dirs that may have a .nemoclaw folder
+    for user_home in /home/*; do
+        if [[ -d "${user_home}/.nemoclaw" ]]; then
+            rm -rf "${user_home}/.nemoclaw"
+            log_success "Removed ${user_home}/.nemoclaw"
+        fi
+    done
 }
 
 # Remove systemd service files
@@ -381,7 +397,21 @@ verify_destruction() {
     else
         log_success "✓ /srv/nemoclaw/ removed"
     fi
-    
+
+    # Check ~/.nemoclaw removed (all home dirs)
+    local stale_home_nemoclaw=0
+    for check_dir in /root /home/*; do
+        if [[ -d "${check_dir}/.nemoclaw" ]]; then
+            log_warn "⚠ ${check_dir}/.nemoclaw still exists"
+            stale_home_nemoclaw=$((stale_home_nemoclaw + 1))
+        fi
+    done
+    if [[ $stale_home_nemoclaw -eq 0 ]]; then
+        log_success "✓ ~/.nemoclaw removed"
+    else
+        issues=$((issues + stale_home_nemoclaw))
+    fi
+
     if [[ $issues -eq 0 ]]; then
         log_success "Destruction verified!"
         return 0
