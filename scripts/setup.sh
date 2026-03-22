@@ -255,7 +255,7 @@ install_openshell() {
     
     # Download latest OpenShell release
     local latest_release=$(curl -s https://api.github.com/repos/NVIDIA/OpenShell/releases/latest | jq -r '.tag_name')
-    local download_url="https://github.com/NVIDIA/OpenShell/releases/download/${latest_release}/openshell-linux-x86_64"
+    local download_url="https://github.com/NVIDIA/OpenShell/releases/download/${latest_release}/openshell-x86_64-unknown-linux-musl.tar.gz"
     
     curl -fsSL "$download_url" -o /usr/local/bin/openshell
     chmod +x /usr/local/bin/openshell
