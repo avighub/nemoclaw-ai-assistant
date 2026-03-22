@@ -141,7 +141,7 @@ find_nemoclaw_path() {
     
     # Try npm global path
     if command -v npm &> /dev/null; then
-        NEMOCLAW_PATH=$(npm root -g)/../nemoclaw 2>/dev/null || "")
+        NEMOCLAW_PATH="$(npm root -g 2>/dev/null)/../nemoclaw"
         if [[ -f "$NEMOCLAW_PATH/package.json" ]]; then
             log_success "Found at: $NEMOCLAW_PATH"
             return 0
