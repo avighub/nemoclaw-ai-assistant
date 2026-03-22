@@ -67,7 +67,10 @@ nano .env  # Add your NVIDIA_API_KEY
 bash scripts/setup.sh
 
 # When prompted: "Run NVIDIA installer? (y/n)"
-# Answer: y (or run manually later)
+# Answer: y (or N to run manually later)
+
+# When the installer asks about policy presets, select only telegram. 
+# Skip all others unless you specifically need them
 ```
 
 **What foundational setup does:**
@@ -99,17 +102,6 @@ This installer:
 
 **Important:** Before running onboarding, source your `.env` file:
 
-```bash
-# Load environment variables
-source .env
-
-# Verify API key is set
-echo $NVIDIA_API_KEY
-
-# Now run onboarding
-nemoclaw onboard
-```
-
 If API key is not loaded, onboarding will fail at step [6/7] with "sandbox not found" error.
 
 ### 4. Start Using NemoClaw
@@ -129,20 +121,8 @@ openclaw agent -m "hello"
 
 Connect NemoClaw to Telegram for easy messaging:
 
-**During Onboarding:**
-When the installer asks about policy presets, select **only `telegram`**. Skip all others unless you specifically need them:
+**During Onboarding:** You must have selected the Telegram integration option. If you skipped it, you can re-run onboarding or manually set up the bot later.
 
-```
-○ discord     — Not needed
-○ docker      — Not needed
-○ huggingface — Not needed
-○ jira        — Not needed
-○ npm         — Not needed
-○ outlook     — Not needed
-● telegram    — SELECT THIS (for Telegram Bot)
-○ pypi        — Not needed
-○ slack       — Not needed
-```
 
 **Create Telegram Bot:**
 
@@ -156,7 +136,7 @@ When the installer asks about policy presets, select **only `telegram`**. Skip a
 NemoClaw stores credentials in `~/.nemoclaw/credentials.json`. Add your bot token:
 
 ```bash
-# Create credentials file with both tokens
+# update or Create credentials file with both tokens
 cat > ~/.nemoclaw/credentials.json << EOF
 {
   "TELEGRAM_BOT_TOKEN": "YOUR_BOT_TOKEN_HERE",
@@ -174,7 +154,7 @@ NemoClaw reads credentials from the file but needs the token in the **environmen
 
 ```bash
 # Export token from credentials file
-export TELEGRAM_BOT_TOKEN=$(grep -o '"TELEGRAM_BOT_TOKEN":"[^"]*"' ~/.nemoclaw/credentials.json | cut -d'"' -f4)
+export TELEGRAM_BOT_TOKEN=$(jq -r '.TELEGRAM_BOT_TOKEN' ~/.nemoclaw/credentials.json)
 
 # Verify it's set
 echo $TELEGRAM_BOT_TOKEN
