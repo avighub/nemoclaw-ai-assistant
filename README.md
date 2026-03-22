@@ -61,7 +61,7 @@ ssh root@<instance-ip>
 ```bash
 # Copy .env configuration
 cp .env.example .env
-nano .env  # Add your NVIDIA_API_KEY (or skip for now)
+nano .env  # Add your NVIDIA_API_KEY
 
 # Run automated foundational setup
 bash scripts/setup.sh

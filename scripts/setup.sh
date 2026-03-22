@@ -166,6 +166,15 @@ load_env() {
         fi
     done
 
+    # Re-source .env to pick up any changes written during the validation loop
+    log_info "Sourcing $ENV_FILE..."
+    set +u
+    source "$ENV_FILE" || {
+        log_error "Failed to source $ENV_FILE — check for syntax errors"
+        exit 1
+    }
+    set -u
+
     log_success "Loaded configuration from .env"
 }
 
