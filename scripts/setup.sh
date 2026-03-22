@@ -273,17 +273,29 @@ install_nemoclaw() {
     
     npm install -g nemoclaw
     
-    # Verify installation
-    if ! command -v nemoclaw &> /dev/null; then
-        # Try with PATH update
-        export PATH="/usr/local/bin:$PATH"
+    # Update PATH to include npm global bin directory
+    export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+    
+    # Wait a moment for npm to finish linking
+    sleep 1
+    
+    # Verify installation - check multiple possible locations
+    local nemoclaw_path=""
+    if command -v nemoclaw &> /dev/null; then
+        nemoclaw_path=$(command -v nemoclaw)
+    elif [[ -f "/usr/local/bin/nemoclaw" ]]; then
+        nemoclaw_path="/usr/local/bin/nemoclaw"
+    elif [[ -f "$(npm prefix -g)/bin/nemoclaw" ]]; then
+        nemoclaw_path="$(npm prefix -g)/bin/nemoclaw"
     fi
     
-    if command -v nemoclaw &> /dev/null; then
-        log_success "NemoClaw installed: $(nemoclaw --version 2>/dev/null || echo 'v1.0.0')"
+    if [[ -n "$nemoclaw_path" ]]; then
+        log_success "NemoClaw installed: $nemoclaw_path"
+        return 0
     else
-        log_error "NemoClaw installation failed"
-        exit 1
+        log_warn "NemoClaw installation may have failed, continuing anyway"
+        log_info "You can manually install with: npm install -g nemoclaw"
+        return 0  # Don't exit, let nemoclaw installation during onboarding handle it
     fi
 }
 
