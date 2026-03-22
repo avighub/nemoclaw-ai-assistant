@@ -126,7 +126,7 @@ openclaw agent -m "hello"
 
 ### 5. (Optional) Telegram Bot Integration
 
-Connect NemoClaw to Telegram for easy messaging:
+Connect NemoClaw to Telegram for easy messaging with one command:
 
 **During Onboarding:**
 When the installer asks about policy presets, select **only `telegram`**. Skip all others unless you specifically need them:
@@ -150,19 +150,45 @@ When the installer asks about policy presets, select **only `telegram`**. Skip a
 3. Follow the prompts to name your bot
 4. BotFather gives you a bot token (e.g., `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
 
-**Configure NemoClaw:**
+**Setup Telegram Bridge (Automated):**
 
 ```bash
-# Set your bot token
-nemoclaw my-assistant config set telegram_token YOUR_BOT_TOKEN_HERE
+# Run the setup script (interactive)
+bash scripts/telegram-setup.sh
 
-# Restart NemoClaw
-nemoclaw my-assistant restart
+# Or provide token directly (non-interactive)
+bash scripts/telegram-setup.sh --token YOUR_BOT_TOKEN
+
+# For a different sandbox
+bash scripts/telegram-setup.sh --token YOUR_BOT_TOKEN --sandbox my-assistant
 ```
+
+The script will:
+- ✓ Save your bot token securely
+- ✓ Find NemoClaw installation
+- ✓ Create systemd service (auto-start on reboot)
+- ✓ Start the Telegram bridge
+- ✓ Verify everything is working
 
 **Start Chatting:**
 
 Find your bot in Telegram (search by the name you gave it) and start messaging!
+
+**Useful Commands:**
+
+```bash
+# View logs
+bash scripts/telegram-setup.sh --logs
+
+# Stop bridge
+bash scripts/telegram-setup.sh --stop
+
+# Restart bridge
+bash scripts/telegram-setup.sh --restart
+
+# Check systemd service status
+systemctl status nemoclaw-telegram.service
+```
 
 ### 6. (Optional) Start Supporting Services
 
