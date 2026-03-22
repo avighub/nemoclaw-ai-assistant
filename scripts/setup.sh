@@ -147,7 +147,12 @@ load_env() {
         local remaining=$((max_attempts - attempt))
         echo -e "${YELLOW}[PROMPT]${NC} Enter your NVIDIA API key (attempt $attempt/$max_attempts, $remaining remaining):"
         echo -e "         Keys look like: nvapi-xxxxxxxxxxxxxxxxxxxx"
-        read -r -p "         NVIDIA_API_KEY: " input_key
+        read -r -p "         NVIDIA_API_KEY: " input_key || true   # || true: prevent set -e from killing on empty/EOF
+
+        if [[ -z "$input_key" ]]; then
+            log_warn "No input received — please enter a key"
+            continue
+        fi
 
         if [[ -n "$input_key" ]]; then
             NVIDIA_API_KEY="$input_key"
