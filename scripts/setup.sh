@@ -298,32 +298,33 @@ install_openshell() {
 install_nemoclaw() {
     log_info "Installing NemoClaw globally..."
     
-    npm install -g nemoclaw
+    # Install globally
+    npm install -g nemoclaw 2>&1 | tail -1
     
-    # Update PATH to include npm global bin directory
-    export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+    # Wait for npm to finish
+    sleep 2
     
-    # Wait a moment for npm to finish linking
-    sleep 1
+    # Get npm global prefix
+    local npm_global=$(npm prefix -g)
+    local nemoclaw_bin="$npm_global/bin/nemoclaw"
     
-    # Verify installation - check multiple possible locations
-    local nemoclaw_path=""
-    if command -v nemoclaw &> /dev/null; then
-        nemoclaw_path=$(command -v nemoclaw)
-    elif [[ -f "/usr/local/bin/nemoclaw" ]]; then
-        nemoclaw_path="/usr/local/bin/nemoclaw"
-    elif [[ -f "$(npm prefix -g)/bin/nemoclaw" ]]; then
-        nemoclaw_path="$(npm prefix -g)/bin/nemoclaw"
+    # If nemoclaw was installed, create symlink in /usr/local/bin
+    if [[ -f "$nemoclaw_bin" ]]; then
+        log_info "Creating symlink to nemoclaw binary at /usr/local/bin/nemoclaw..."
+        ln -sf "$nemoclaw_bin" /usr/local/bin/nemoclaw
+        chmod +x /usr/local/bin/nemoclaw
+        
+        # Verify symlink works
+        if /usr/local/bin/nemoclaw --version &>/dev/null; then
+            log_success "NemoClaw installed and symlinked to /usr/local/bin/nemoclaw"
+            return 0
+        fi
     fi
     
-    if [[ -n "$nemoclaw_path" ]]; then
-        log_success "NemoClaw installed: $nemoclaw_path"
-        return 0
-    else
-        log_warn "NemoClaw installation may have failed, continuing anyway"
-        log_info "You can manually install with: npm install -g nemoclaw"
-        return 0  # Don't exit, let nemoclaw installation during onboarding handle it
-    fi
+    # If all else fails, continue anyway - onboarding will handle it
+    log_warn "NemoClaw binary linking incomplete - will be installed during onboarding"
+    log_info "You can verify later with: npm prefix -g | xargs -I {} ls {}/bin/nemoclaw"
+    return 0
 }
 
 # Create persistent volume directories
