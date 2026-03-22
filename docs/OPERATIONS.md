@@ -3,12 +3,114 @@
 Daily operations, monitoring, and maintenance procedures for production NemoClaw deployment.
 
 ## Table of Contents
+- [Setup & Teardown](#setup--teardown)
 - [Starting Services](#starting-services)
 - [Monitoring](#monitoring)
 - [Common Tasks](#common-tasks)
 - [Troubleshooting](#troubleshooting)
 - [Performance Tuning](#performance-tuning)
 - [Scaling](#scaling)
+
+---
+
+## Setup & Teardown
+
+### Initial Installation (setup.sh)
+
+The setup script is **idempotent** and **non-destructive** - safe to run multiple times:
+
+```bash
+# Initial installation (installs foundations)
+bash scripts/setup.sh
+
+# Re-running is safe (skips already-installed packages)
+bash scripts/setup.sh
+
+# With flags to skip certain components
+bash scripts/setup.sh --skip-docker --skip-openshell
+```
+
+**Behavior with existing packages:**
+
+| Package | Behavior | Idempotent |
+|---------|----------|-----------|
+| Docker | Keeps existing version (no override) | ✅ Yes |
+| Node.js | Keeps if >= 20, upgrades if < 20 | ✅ Yes |
+| OpenShell | Skips if already installed | ✅ Yes |
+
+**When to re-run setup.sh:**
+- Previous setup failed (network issues, etc.)
+- You want to verify installation state
+- Partial setup was interrupted
+- Adding missing components
+
+### Complete Teardown (destroy.sh)
+
+Remove NemoClaw and optionally Docker/Node.js:
+
+```bash
+# Full cleanup (remove everything)
+bash scripts/destroy.sh --yes
+
+# Keep common packages (reuse for other projects)
+bash scripts/destroy.sh --yes --keep-docker-nodejs
+
+# Granular control
+bash scripts/destroy.sh --yes --keep-docker      # Keep Docker, remove Node.js
+bash scripts/destroy.sh --yes --keep-nodejs      # Keep Node.js, remove Docker
+```
+
+**What destroy.sh removes by default:**
+- NemoClaw services and containers
+- Docker installation
+- Node.js installation  
+- OpenShell package
+- /srv/nemoclaw/ (config, models, backups, logs - EVERYTHING)
+- Cron jobs
+- nemoclaw user
+
+**What it keeps:**
+- OS packages (curl, wget, git, etc.)
+- SSH access
+
+**Important:** Always backup before destroying!
+
+```bash
+# Recommended workflow
+bash scripts/backup.sh              # Back up everything
+bash scripts/destroy.sh --yes       # Clean teardown
+# Server is now clean
+```
+
+### Common Scenarios
+
+**Scenario 1: Fresh reinstall (keep Docker/Node)**
+
+```bash
+bash scripts/backup.sh
+bash scripts/destroy.sh --yes --keep-docker-nodejs
+bash scripts/setup.sh
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+**Scenario 2: Complete cleanup (move to new VPS)**
+
+```bash
+bash scripts/backup.sh
+bash scripts/destroy.sh --yes        # Remove everything
+# Copy backup to new VPS and restore
+bash scripts/restore.sh <backup-file>
+bash scripts/setup.sh
+```
+
+**Scenario 3: Quick redeploy (package versions matter)**
+
+```bash
+# If you need specific Docker/Node versions
+bash scripts/backup.sh
+bash scripts/destroy.sh --yes --keep-docker-nodejs  # Keep working versions
+bash scripts/setup.sh
+```
 
 ---
 
@@ -516,6 +618,97 @@ docker compose exec <svc> <cmd>                # Run command in service
 # Cleanup
 docker system prune -f                         # Clean unused Docker resources
 docker logs --help                             # Docker log options
+```
+
+---
+
+## FAQ: Setup & Destroy
+
+**Q: What happens if I run setup.sh multiple times?**
+
+A: It's safe and idempotent. Already-installed packages are skipped:
+- Docker: Keeps existing version
+- Node.js: Keeps if >= 20, upgrades if < 20
+- OpenShell: Skips if already installed
+
+Useful for fixing partial installations or verifying state.
+
+---
+
+**Q: Will setup.sh override my existing Docker/Node versions?**
+
+A: No. setup.sh explicitly checks for existing installations and skips:
+
+```bash
+if command -v docker &> /dev/null; then
+    return 0  # Skip - keep existing
+fi
+```
+
+This preserves your working setup.
+
+---
+
+**Q: Does destroy.sh delete my backups?**
+
+A: By default, yes. `/srv/nemoclaw/` is removed completely (including backups).
+
+**Always backup first:**
+```bash
+bash scripts/backup.sh         # Create backup BEFORE destroy
+bash scripts/destroy.sh --yes  # Then destroy
+```
+
+You can keep the backup somewhere else (upload to cloud storage, external disk, etc.).
+
+---
+
+**Q: Can I keep Docker and Node.js when destroying?**
+
+A: Yes, use the `--keep-*` flags:
+
+```bash
+# Keep both
+bash scripts/destroy.sh --yes --keep-docker-nodejs
+
+# Keep individually
+bash scripts/destroy.sh --yes --keep-docker
+bash scripts/destroy.sh --yes --keep-nodejs
+```
+
+Useful for:
+- Reusing Docker/Node across projects
+- Avoiding reinstallation if you have specific versions
+- Quick NemoClaw redeploys
+
+---
+
+**Q: What's the difference between destroy.sh and just deleting the VPS?**
+
+A: `destroy.sh` is **vendor-agnostic**:
+- Works on any VPS provider (Hetzner, DigitalOcean, AWS, etc.)
+- No dependence on snapshots or provider features
+- Clean removal of all components
+- Leaves server ready for new projects
+
+Deleting the VPS only works if your provider supports it.
+
+---
+
+**Q: How do I reinstall NemoClaw after destroy?**
+
+A: Simple workflow:
+
+```bash
+bash scripts/destroy.sh --yes --keep-docker-nodejs
+bash scripts/setup.sh
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+Or restore from backup:
+
+```bash
+bash scripts/restore.sh <backup-file>
 ```
 
 ---

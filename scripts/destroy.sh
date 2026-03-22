@@ -1,17 +1,24 @@
 #!/bin/bash
 
 ##############################################################################
-# NemoClaw Destroy Script
+# NemoClaw Complete Destroy Script (Vendor-Agnostic)
 #
-# Cleanly removes all NemoClaw services and Docker containers
-# PRESERVES all data in /srv/nemoclaw (config, models, backups, logs)
+# Completely removes EVERYTHING created by setup.sh, leaving server clean.
+# This design is vendor-agnostic - works on any VPS provider.
 #
-# Steps:
-#   1. Stops all services
-#   2. Removes Docker containers and networks
-#   3. Removes Docker volumes (but saves their data first)
-#   4. Removes systemd services
-#   5. KEEPS /srv/nemoclaw/ intact (allows reinstall)
+# IMPORTANT: User is responsible for backing up before running this!
+#   bash scripts/backup.sh     # Create backup BEFORE destroy
+#
+# Removes:
+#   - NemoClaw services (systemd, Docker, OpenShell)
+#   - Docker installation (apt-get purge)
+#   - Node.js installation (apt-get purge)
+#   - OpenShell (pip3 uninstall)
+#   - /srv/nemoclaw/ (config, models, backups, logs - EVERYTHING)
+#   - Cron jobs
+#   - systemd service files
+#
+# Result: Clean server, just as it was before setup.sh
 #
 # Usage: bash scripts/destroy.sh [--help]
 ##############################################################################
@@ -24,9 +31,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
-
-# Configuration
-BACKUP_DIR="${BACKUP_DIR:-/srv/nemoclaw/backups}"
 
 ##############################################################################
 # Helper Functions
@@ -52,64 +56,81 @@ usage() {
     cat << EOF
 Usage: bash scripts/destroy.sh [OPTIONS]
 
-Removes all NemoClaw services and Docker resources.
-Data in /srv/nemoclaw is PRESERVED for easy recovery.
+Completely removes everything created by setup.sh.
+Server will be clean and ready for other uses.
+
+⚠️  WARNING: This removes EVERYTHING including /srv/nemoclaw/
 
 Options:
   --help              Show this help message
   --yes               Skip confirmation prompt
-  --keep-backups      Don't backup current state before destroying
   --verbose           Enable verbose output
-  --also-delete-data  Delete /srv/nemoclaw/ too (DANGEROUS!)
+  --keep-docker       Don't uninstall Docker (keep common packages)
+  --keep-nodejs       Don't uninstall Node.js (keep common packages)
+  --keep-docker-nodejs Keep both Docker and Node.js
+
+BEFORE destroying, ensure you have a backup:
+  bash scripts/backup.sh
+
+Then destroy:
+  bash scripts/destroy.sh --yes
 
 Examples:
   bash scripts/destroy.sh
-  bash scripts/destroy.sh --yes
-  bash scripts/destroy.sh --also-delete-data --yes
+  bash scripts/destroy.sh --yes --verbose
+  bash scripts/destroy.sh --yes --keep-docker-nodejs
+  bash scripts/destroy.sh --yes --keep-docker --keep-nodejs
 EOF
     exit 0
 }
 
 # Print what will be destroyed
 print_destruction_plan() {
+    local docker_status="✗ docker installation"
+    local nodejs_status="✗ Node.js installation"
+    
+    if [[ "${KEEP_DOCKER:-false}" == "true" ]]; then
+        docker_status="✓ docker installation (KEEPING)"
+    fi
+    
+    if [[ "${KEEP_NODEJS:-false}" == "true" ]]; then
+        nodejs_status="✓ Node.js installation (KEEPING)"
+    fi
+    
     cat << EOF
 
-$( echo -e "${YELLOW}Destruction Plan:${NC}" )
+$( echo -e "${RED}═══ COMPLETE DESTRUCTION PLAN ═══${NC}" )
 
-Services to stop:
-  ✓ Docker Compose services (Ollama, Prometheus, Grafana, backup runner)
-  ✓ nemoclaw systemd service
-  ✓ OpenShell gateway
+This will PERMANENTLY REMOVE:
+  ✗ NemoClaw services (systemd, OpenShell gateway)
+  $docker_status
+  $nodejs_status
+  ✗ OpenShell (pip3 package)
+  ✗ /srv/nemoclaw/ (config, models, backups, logs)
+  ✗ Docker containers, images, networks, volumes
+  ✗ Cron jobs (backup runner)
 
-Docker resources to remove:
-  ✓ All containers (nemoclaw-*, backup-runner, etc.)
-  ✓ Docker networks (nemoclaw)
-  ✓ Docker volumes
+Server state after:
+  → Clean, as it was BEFORE setup.sh
+  → Ready for fresh setup.sh or other uses
+  → Vendor-agnostic (no VPS provider features needed)
 
-Data PRESERVED (for recovery):
-  ✓ /srv/nemoclaw/config    (NemoClaw configuration)
-  ✓ /srv/nemoclaw/models    (Ollama model cache)
-  ✓ /srv/nemoclaw/backups   (Backup files)
-  ✓ /srv/nemoclaw/logs      (Service logs)
-
-After destruction:
-  - Can reinstall cleanly with: bash scripts/setup.sh
-  - Can restore from backup with: bash scripts/restore.sh <backup>
+$( echo -e "${YELLOW}⚠️  Make sure you have backed up!${NC}" )
+  bash scripts/backup.sh  # Run THIS before destroying
 
 EOF
 }
 
 # Confirmation prompt
 confirm_destruction() {
-    echo -e "${RED}WARNING: This will remove all NemoClaw services!${NC}"
-    print_destruction_plan
-    
     if [[ "${YES:-false}" == "true" ]]; then
         log_warn "Proceeding without confirmation (--yes flag)"
         return 0
     fi
     
-    read -p "Do you want to proceed with destruction? (type 'destroy' to confirm): " -r response
+    print_destruction_plan
+    
+    read -p "Type 'destroy' to confirm complete removal: " -r response
     
     if [[ "$response" != "destroy" ]]; then
         log_warn "Destruction cancelled"
@@ -117,85 +138,71 @@ confirm_destruction() {
     fi
 }
 
-# Backup current state before destruction
-backup_before_destroy() {
-    if [[ "${KEEP_BACKUPS:-false}" == "true" ]]; then
-        log_info "Skipping pre-destruction backup"
-        return 0
-    fi
-    
-    log_info "Creating final backup before destruction..."
-    
-    local final_backup="$BACKUP_DIR/pre-destroy-backup-$(date -u +'%Y-%m-%d-%H-%M-%S').tar.gz"
-    
-    mkdir -p "$BACKUP_DIR"
-    
-    tar -czf "$final_backup" \
-        --exclude='*.log' \
-        --exclude='__pycache__' \
-        --transform='s|^/srv/nemoclaw|nemoclaw-data|' \
-        /srv/nemoclaw 2>/dev/null || {
-        log_warn "Could not create pre-destruction backup"
-        return 1
-    }
-    
-    local size=$(du -h "$final_backup" | cut -f1)
-    log_success "Final backup created: $final_backup ($size)"
-}
-
-# Stop all services
+# Stop services
 stop_services() {
     log_info "Stopping services..."
     
     # Stop docker compose
-    if docker compose ps &> /dev/null; then
-        log_info "  Stopping Docker Compose services..."
+    if docker compose ps &> /dev/null 2>&1; then
+        log_info "  Stopping Docker Compose..."
         docker compose down 2>/dev/null || true
     fi
     
     # Stop nemoclaw systemd service
-    if systemctl is-enabled nemoclaw.service &> /dev/null; then
-        log_info "  Stopping nemoclaw systemd service..."
+    if systemctl is-active nemoclaw.service &> /dev/null; then
+        log_info "  Stopping nemoclaw service..."
         systemctl stop nemoclaw.service 2>/dev/null || true
-        systemctl disable nemoclaw.service 2>/dev/null || true
     fi
     
-    # Kill any remaining openshell processes
+    # Disable services
+    systemctl disable nemoclaw.service 2>/dev/null || true
+    
+    # Kill any remaining processes
     pkill -f "openshell" 2>/dev/null || true
+    pkill -f "nemoclaw" 2>/dev/null || true
     
     sleep 2
     log_success "Services stopped"
 }
 
-# Remove Docker containers and networks
+# Remove Docker resources
 remove_docker_resources() {
     log_info "Removing Docker resources..."
     
-    # Remove containers
-    local containers=$(docker ps -a --filter "label=com.nemoclaw.service" -q 2>/dev/null || echo "")
-    if [[ -n "$containers" ]]; then
-        log_info "  Removing nemoclaw containers..."
-        docker rm -f $containers 2>/dev/null || true
+    if ! command -v docker &> /dev/null; then
+        log_info "  Docker not found, skipping"
+        return 0
     fi
     
-    # Remove other nemoclaw-* containers
-    local other_containers=$(docker ps -a --filter "name=nemoclaw-" -q 2>/dev/null || echo "")
-    if [[ -n "$other_containers" ]]; then
-        docker rm -f $other_containers 2>/dev/null || true
-    fi
+    # Remove containers
+    log_info "  Removing containers..."
+    docker container prune -af 2>/dev/null || true
+    
+    # Remove images
+    log_info "  Removing images..."
+    docker image prune -af 2>/dev/null || true
     
     # Remove networks
-    local networks=$(docker network ls --filter "name=nemoclaw" -q 2>/dev/null || echo "")
-    if [[ -n "$networks" ]]; then
-        log_info "  Removing nemoclaw networks..."
-        docker network rm $networks 2>/dev/null || true
-    fi
+    log_info "  Removing networks..."
+    docker network prune -f 2>/dev/null || true
     
-    # Prune unused volumes (but our bind mounts will remain)
-    log_info "  Pruning unused Docker volumes..."
-    docker volume prune -f --filter "label=com.nemoclaw.service" 2>/dev/null || true
+    # Remove volumes
+    log_info "  Removing volumes..."
+    docker volume prune -af 2>/dev/null || true
     
     log_success "Docker resources removed"
+}
+
+# Remove persistent data directory
+remove_data_directory() {
+    log_info "Removing /srv/nemoclaw/..."
+    
+    if [[ -d /srv/nemoclaw ]]; then
+        rm -rf /srv/nemoclaw
+        log_success "Removed /srv/nemoclaw/"
+    else
+        log_info "  /srv/nemoclaw/ not found (already removed)"
+    fi
 }
 
 # Remove systemd service files
@@ -204,10 +211,9 @@ remove_systemd_services() {
     
     if [[ -f /etc/systemd/system/nemoclaw.service ]]; then
         rm /etc/systemd/system/nemoclaw.service
-        log_info "  Removed: /etc/systemd/system/nemoclaw.service"
+        log_info "  Removed /etc/systemd/system/nemoclaw.service"
     fi
     
-    # Reload systemd
     systemctl daemon-reload 2>/dev/null || true
     
     log_success "Systemd services removed"
@@ -217,60 +223,145 @@ remove_systemd_services() {
 remove_cron_jobs() {
     log_info "Removing cron jobs..."
     
-    # Remove backup cron job
-    crontab -l 2>/dev/null | grep -v "backup.sh" | crontab - 2>/dev/null || true
+    # Remove nemoclaw backup cron job
+    (crontab -l 2>/dev/null | grep -v "backup.sh" | crontab - 2>/dev/null) || true
     
     log_success "Cron jobs removed"
 }
 
-# Remove installed packages (optional, depending on flag)
-remove_packages() {
-    log_warn "Skipping package removal (Docker, Node.js, OpenShell remain)"
-    log_info "To uninstall these, run: apt-get purge docker.io nodejs npm"
-    log_info "Or use: npm uninstall -g nemoclaw openshell"
+# Uninstall Docker
+uninstall_docker() {
+    if [[ "${KEEP_DOCKER:-false}" == "true" ]]; then
+        log_info "Skipping Docker uninstall (--keep-docker flag)"
+        return 0
+    fi
+    
+    log_info "Uninstalling Docker..."
+    
+    if ! command -v docker &> /dev/null; then
+        log_info "  Docker not found (already removed)"
+        return 0
+    fi
+    
+    apt-get remove -y docker.io docker-ce docker-ce-cli 2>/dev/null || true
+    apt-get purge -y docker.io docker-ce docker-ce-cli 2>/dev/null || true
+    
+    # Remove Docker group
+    groupdel docker 2>/dev/null || true
+    
+    log_success "Docker uninstalled"
 }
 
-# Verify destruction completed
+# Uninstall Node.js
+uninstall_nodejs() {
+    if [[ "${KEEP_NODEJS:-false}" == "true" ]]; then
+        log_info "Skipping Node.js uninstall (--keep-nodejs flag)"
+        return 0
+    fi
+    
+    log_info "Uninstalling Node.js..."
+    
+    if ! command -v node &> /dev/null; then
+        log_info "  Node.js not found (already removed)"
+        return 0
+    fi
+    
+    apt-get remove -y nodejs npm 2>/dev/null || true
+    apt-get purge -y nodejs npm 2>/dev/null || true
+    
+    # Remove NodeSource repository if added
+    rm /etc/apt/sources.list.d/nodesource.list 2>/dev/null || true
+    apt-get update 2>/dev/null || true
+    
+    log_success "Node.js uninstalled"
+}
+
+# Uninstall OpenShell
+uninstall_openshell() {
+    log_info "Uninstalling OpenShell..."
+    
+    if ! command -v openshell &> /dev/null; then
+        log_info "  OpenShell not found (already removed)"
+        return 0
+    fi
+    
+    # Remove binary
+    rm /usr/local/bin/openshell 2>/dev/null || true
+    
+    # Uninstall pip package
+    if command -v pip3 &> /dev/null; then
+        pip3 uninstall -y openshell 2>/dev/null || true
+    fi
+    
+    log_success "OpenShell uninstalled"
+}
+
+# Remove nemoclaw user
+remove_nemoclaw_user() {
+    log_info "Removing nemoclaw user..."
+    
+    if ! id nemoclaw &>/dev/null; then
+        log_info "  User nemoclaw not found (already removed)"
+        return 0
+    fi
+    
+    # Kill any processes running as nemoclaw
+    pkill -u nemoclaw 2>/dev/null || true
+    
+    # Remove user and home directory
+    userdel -r nemoclaw 2>/dev/null || true
+    
+    log_success "User nemoclaw removed"
+}
+
+# Verify destruction
 verify_destruction() {
     log_info "Verifying destruction..."
     
     local issues=0
     
-    # Check no nemoclaw containers running
-    if docker ps --filter "name=nemoclaw-" --filter "status=running" | grep -q nemoclaw; then
-        log_warn "⚠ Some nemoclaw containers still running"
-        issues=$((issues + 1))
-    else
-        log_success "✓ No nemoclaw containers running"
-    fi
-    
-    # Check no nemoclaw network
-    if docker network ls --filter "name=nemoclaw" | grep -q nemoclaw; then
-        log_warn "⚠ nemoclaw network still exists"
-        issues=$((issues + 1))
-    else
-        log_success "✓ nemoclaw network removed"
-    fi
-    
-    # Check no systemd service
+    # Check services removed
     if systemctl is-enabled nemoclaw.service 2>/dev/null; then
-        log_warn "⚠ nemoclaw systemd service still enabled"
+        log_warn "⚠ nemoclaw service still enabled"
         issues=$((issues + 1))
     else
-        log_success "✓ nemoclaw systemd service removed"
+        log_success "✓ nemoclaw service removed"
     fi
     
-    # Check data still exists
-    if [[ -d /srv/nemoclaw ]]; then
-        local size=$(du -sh /srv/nemoclaw | cut -f1)
-        log_success "✓ /srv/nemoclaw preserved ($size)"
+    # Check Docker removed (unless --keep-docker)
+    if [[ "${KEEP_DOCKER:-false}" != "true" ]]; then
+        if command -v docker &> /dev/null; then
+            log_warn "⚠ docker still installed"
+            issues=$((issues + 1))
+        else
+            log_success "✓ docker removed"
+        fi
     else
-        log_error "✗ /srv/nemoclaw was removed!"
+        log_success "✓ docker kept (--keep-docker flag)"
+    fi
+    
+    # Check Node.js removed (unless --keep-nodejs)
+    if [[ "${KEEP_NODEJS:-false}" != "true" ]]; then
+        if command -v node &> /dev/null; then
+            log_warn "⚠ node still installed"
+            issues=$((issues + 1))
+        else
+            log_success "✓ node removed"
+        fi
+    else
+        log_success "✓ node kept (--keep-nodejs flag)"
+    fi
+    
+    # Check /srv/nemoclaw removed
+    if [[ -d /srv/nemoclaw ]]; then
+        log_warn "⚠ /srv/nemoclaw/ still exists"
         issues=$((issues + 1))
+    else
+        log_success "✓ /srv/nemoclaw/ removed"
     fi
     
     if [[ $issues -eq 0 ]]; then
-        log_success "Destruction verified - all services removed"
+        log_success "Destruction verified!"
         return 0
     else
         log_warn "Destruction completed with $issues issue(s)"
@@ -278,39 +369,44 @@ verify_destruction() {
     fi
 }
 
-# Print destruction summary
+# Print summary
 print_summary() {
+    local kept_packages=""
+    if [[ "${KEEP_DOCKER:-false}" == "true" ]]; then
+        kept_packages="Docker "
+    fi
+    if [[ "${KEEP_NODEJS:-false}" == "true" ]]; then
+        kept_packages+="Node.js"
+    fi
+    
     cat << EOF
 
 $( echo -e "${GREEN}══════════════════════════════════════════════════════════${NC}" )
-$( echo -e "${GREEN}NemoClaw Destruction Complete!${NC}" )
+$( echo -e "${GREEN}NemoClaw Complete Destruction Complete!${NC}" )
 $( echo -e "${GREEN}══════════════════════════════════════════════════════════${NC}" )
 
 Removed:
-  ✓ Docker containers
-  ✓ Docker networks
-  ✓ systemd services
+  ✓ NemoClaw services and containers
+  $( [[ "${KEEP_DOCKER:-false}" != "true" ]] && echo "✓ Docker installation" || echo "✗ Docker (KEPT)" )
+  $( [[ "${KEEP_NODEJS:-false}" != "true" ]] && echo "✓ Node.js installation" || echo "✗ Node.js (KEPT)" )
+  ✓ OpenShell installation
+  ✓ /srv/nemoclaw/ (all data)
+  ✓ Systemd service files
   ✓ Cron jobs
+  ✓ nemoclaw user
 
-Preserved:
-  ✓ /srv/nemoclaw/config    (NemoClaw configuration)
-  ✓ /srv/nemoclaw/models    (Ollama models)
-  ✓ /srv/nemoclaw/backups   (Backup files)
-  ✓ /srv/nemoclaw/logs      (Service logs)
-  ✓ Docker, Node.js, npm    (System packages)
+Result: Server is clean and ready for:
+  • Fresh setup.sh installation
+  • Other projects
+  • VPS decommissioning
 
-Recovery Options:
+Reinstall NemoClaw:
+  bash scripts/setup.sh
 
-1. Reinstall from scratch:
-   bash scripts/setup.sh
-
-2. Reinstall and restore from backup:
-   bash scripts/setup.sh
-   bash scripts/restore.sh <backup-file>
-
-3. List available backups:
-   bash scripts/backup.sh --list
-   ls -lh /srv/nemoclaw/backups/
+Restore from backup:
+  1. Copy your backup files to the server
+  2. Run: bash scripts/restore.sh <backup-file>
+  3. Run: bash scripts/setup.sh
 
 $( echo -e "${GREEN}══════════════════════════════════════════════════════════${NC}" )
 EOF
@@ -326,39 +422,34 @@ main() {
         case $1 in
             --help) usage ;;
             --yes) YES=true; shift ;;
-            --keep-backups) KEEP_BACKUPS=true; shift ;;
-            --also-delete-data) DELETE_DATA=true; shift ;;
             --verbose) set -x; shift ;;
+            --keep-docker) KEEP_DOCKER=true; shift ;;
+            --keep-nodejs) KEEP_NODEJS=true; shift ;;
+            --keep-docker-nodejs) KEEP_DOCKER=true; KEEP_NODEJS=true; shift ;;
             *) log_error "Unknown option: $1"; usage ;;
         esac
     done
     
-    log_info "═════════════════════════════════════════════════════════"
-    log_info "NemoClaw Destruction"
-    log_info "═════════════════════════════════════════════════════════"
+    log_info "═══════════════════════════════════════════════════════════"
+    log_info "NemoClaw Complete Destruction"
+    log_info "═══════════════════════════════════════════════════════════"
     
-    # Confirmation
+    # Confirm
     confirm_destruction
-    
-    # Backup before destruction
-    backup_before_destroy
     
     # Execute destruction
     stop_services
     remove_docker_resources
+    remove_data_directory
     remove_systemd_services
     remove_cron_jobs
-    remove_packages
+    uninstall_docker
+    uninstall_nodejs
+    uninstall_openshell
+    remove_nemoclaw_user
     
     # Verify
     verify_destruction
-    
-    # Delete data if requested (DANGEROUS!)
-    if [[ "${DELETE_DATA:-false}" == "true" ]]; then
-        log_error "Deleting /srv/nemoclaw/ (--also-delete-data flag)..."
-        rm -rf /srv/nemoclaw
-        log_warn "Data deleted!"
-    fi
     
     # Summary
     print_summary

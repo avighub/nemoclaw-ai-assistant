@@ -56,58 +56,81 @@ In **Hetzner Cloud Console**:
 1. Click **"Create" → Server**
 2. **Image:** Select Ubuntu 22.04 LTS
 3. **Type:** Select CX43 (8 vCPU, 16 GB RAM, 160 GB NVMe)
-4. **SSH Key:** Select your public key (from your laptop)
-5. **Location:** Choose nearest to you (Frankfurt, Helsinki, etc.)
+4. **SSH Key:** Select your public key
+5. **Location:** Choose nearest to you
 6. Click **"Create & Buy now"**
 
-Wait 2-3 minutes for server to boot. Once status shows **"Running"**:
+Wait 2-3 minutes for server to boot, then SSH in:
 
 ```bash
-# SSH into your new instance
 ssh root@<instance-ip>
-
-# You should be logged in without a password
-# Everything else is automated by setup.sh
 ```
 
-### 2. Deploy NemoClaw
+### 2. Run Foundational Setup
 
 ```bash
 # Create deployment directory
-cd /home/nemoclaw/nemoclaw-deploy
+mkdir -p /root/nemoclaw-deploy
+cd /root/nemoclaw-deploy
 
-# Copy your .env configuration (see .env.example)
+# Copy .env configuration
 cp .env.example .env
-# Edit .env with your NVIDIA API key
-nano .env
+nano .env  # Add your NVIDIA_API_KEY (or skip for now)
 
-# Run automated setup (installs everything - system update, user creation, Docker, NemoClaw)
+# Run automated foundational setup
 bash scripts/setup.sh
+
+# When prompted: "Run NVIDIA installer? (y/n)"
+# Answer: y (or run manually later)
 ```
 
-**What setup.sh does automatically:**
-- Updates system packages (`apt update && apt upgrade`)
-- Creates `nemoclaw` non-root user (if it doesn't exist)
-- Installs Docker, Node.js, npm, OpenShell
-- Installs NemoClaw globally
-- Creates persistent storage directories (`/srv/nemoclaw/config`, etc.)
-- Sets up systemd service and cron jobs
-- Runs initial NemoClaw onboarding (interactive)
+**What foundational setup does:**
+- Updates system packages
+- Creates nemoclaw non-root user
+- Installs Docker
+- Installs Node.js 20+
+- Installs OpenShell via pip3
+- Creates persistent storage directories
+- Sets up systemd service
+- **Delegates to official NVIDIA installer for NemoClaw CLI**
 
 **Setup time:** ~5-10 minutes (depending on internet speed)
 
-Verify installation:
+### 3. Official NVIDIA NemoClaw Installer
+
+Once foundational setup completes, the official NVIDIA installer will:
+
 ```bash
-bash scripts/health-check.sh
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-### 3. Start Services
+This installer:
+1. Clones official NemoClaw repository
+2. Builds NemoClaw CLI
+3. Runs interactive onboarding
+4. Creates your first sandbox
+5. Asks for NVIDIA API key (free tier available at https://build.nvidia.com/)
+
+### 4. Start Using NemoClaw
 
 ```bash
-# Start supporting services (Ollama, monitoring, backup runner)
-docker compose up -d
+# Connect to your sandbox
+nemoclaw my-assistant connect
 
-# Or just the essentials (no Ollama/monitoring):
+# Inside the sandbox, start chatting
+openclaw tui
+
+# Or send messages via CLI
+openclaw agent -m "hello"
+```
+
+### 5. (Optional) Start Supporting Services
+
+```bash
+# Start Ollama, monitoring, backup runner
+docker compose --profile full up -d
+
+# Or just backup runner
 docker compose up -d backup-runner
 ```
 
@@ -368,35 +391,68 @@ bash scripts/health-check.sh
 | NVIDIA API | Pay-per-token | Depends on usage |
 | **Total (Base)** | ~€9.50/month | + API token costs |
 
-## Next Steps
+## Getting Started
 
-1. **Provision CX43** on Hetzner (see Quick Start above)
-2. **Copy deployment files** to your laptop/instance
-3. **Configure .env:**
-   ```bash
-   cp .env.example .env
-   nano .env  # Add your NVIDIA_API_KEY
-   ```
-4. **Run setup** (one command, fully automated):
-   ```bash
-   bash scripts/setup.sh
-   ```
-5. **Verify installation:**
-   ```bash
-   bash scripts/health-check.sh
-   ```
-6. **Connect and chat:**
-   ```bash
-   nemoclaw my-assistant connect
-   openclaw tui  # Inside the sandbox
-   ```
+**Total deployment time:** ~15-20 minutes (provisioning + setup + onboarding)
 
-**All-in-one deployment:** ~15 minutes total (provisioning + setup + onboarding)
+1. **Provision CX43** on Hetzner
+2. **SSH in** and run foundational setup: `bash scripts/setup.sh`
+3. **Official NVIDIA installer** runs automatically (handles NemoClaw CLI + onboarding)
+4. **Connect and chat:** `nemoclaw my-assistant connect` → `openclaw tui`
 
-For detailed guides, see:
-- [OPERATIONS.md](docs/OPERATIONS.md) — Day-to-day tasks and monitoring
-- [BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md) — Backup and disaster recovery
-- [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — Common issues and solutions
+## Architecture
+
+This deployment kit uses a **two-stage approach**:
+
+| Stage | Tool | Responsibility |
+|-------|------|-----------------|
+| **Foundational** | `scripts/setup.sh` (ours) | Docker, Node.js, OpenShell, directories, systemd |
+| **NemoClaw** | Official NVIDIA installer | NemoClaw CLI, onboarding, sandbox creation |
+
+This separation **avoids npm PATH issues** and ensures we're always using the official, tested NemoClaw installer.
+
+## Important: Idempotent Design
+
+All setup and cleanup scripts are **idempotent** and **non-destructive by default**:
+
+### setup.sh Behavior with Existing Packages
+
+```bash
+# Safe to run multiple times - checks for existing installations
+bash scripts/setup.sh
+
+# Docker: Keeps whatever version exists (no override)
+# Node.js: Keeps if >= 20, upgrades if < 20 to v20.x
+# OpenShell: Skips if already installed
+```
+
+✅ **Safe to re-run** if setup fails partway through
+✅ **Won't override** working Docker installations
+✅ **Flexible** with existing Node.js versions (>= 20)
+
+### destroy.sh Flexibility
+
+```bash
+# Remove everything (complete cleanup)
+bash scripts/destroy.sh --yes
+
+# Keep common packages (if you want to reuse Docker/Node.js)
+bash scripts/destroy.sh --yes --keep-docker-nodejs
+bash scripts/destroy.sh --yes --keep-docker
+bash scripts/destroy.sh --yes --keep-nodejs
+```
+
+✅ **Choose what to remove**
+✅ **Reuse common packages** across different projects
+✅ **Completely clean** if needed (vendor-agnostic)
+
+See [OPERATIONS.md](docs/OPERATIONS.md#setup-and-destroy-reference) for detailed reference.
+
+## For Detailed Information
+
+- [OPERATIONS.md](docs/OPERATIONS.md) — Day-to-day tasks, monitoring, troubleshooting
+- [BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md) — Backup procedures and disaster recovery
+- [README.md](#quick-start) — This file (architecture and setup)
 
 ## Support
 
