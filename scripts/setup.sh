@@ -253,14 +253,18 @@ install_openshell() {
     
     log_info "Installing OpenShell..."
     
-    # Download latest OpenShell release
-    local latest_release=$(curl -s https://api.github.com/repos/NVIDIA/OpenShell/releases/latest | jq -r '.tag_name')
-    local download_url="https://github.com/NVIDIA/OpenShell/releases/download/${latest_release}/openshell-x86_64-unknown-linux-musl.tar.gz"
+    # Try to install via Python wheel (more compatible than musl binary)
+    if command -v pip3 &> /dev/null; then
+        local latest_release=$(curl -s https://api.github.com/repos/NVIDIA/OpenShell/releases/latest | jq -r '.tag_name')
+        local wheel_url="https://github.com/NVIDIA/OpenShell/releases/download/${latest_release}/openshell-${latest_release#v}-py3-none-manylinux_2_39_x86_64.whl"
+        
+        if pip3 install "$wheel_url" 2>/dev/null; then
+            log_success "OpenShell installed via pip"
+            return 0
+        fi
+    fi
     
-    curl -fsSL "$download_url" -o /usr/local/bin/openshell
-    chmod +x /usr/local/bin/openshell
-    
-    log_success "OpenShell installed: $(openshell --version)"
+    log_warn "Could not install OpenShell (will be installed by NemoClaw during onboarding)"
 }
 
 # Install NemoClaw via npm
