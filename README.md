@@ -126,7 +126,7 @@ openclaw agent -m "hello"
 
 ### 5. (Optional) Telegram Bot Integration
 
-Connect NemoClaw to Telegram for easy messaging with one command:
+Connect NemoClaw to Telegram for easy messaging:
 
 **During Onboarding:**
 When the installer asks about policy presets, select **only `telegram`**. Skip all others unless you specifically need them:
@@ -150,44 +150,62 @@ When the installer asks about policy presets, select **only `telegram`**. Skip a
 3. Follow the prompts to name your bot
 4. BotFather gives you a bot token (e.g., `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
 
-**Setup Telegram Bridge (Automated):**
+**Configure Bot Token:**
 
+NemoClaw stores credentials in `~/.nemoclaw/credentials.json`. Add your bot token:
+
+**Option A: Interactive Setup**
 ```bash
-# Run the setup script (interactive)
-bash scripts/telegram-setup.sh
-
-# Or provide token directly (non-interactive)
-bash scripts/telegram-setup.sh --token YOUR_BOT_TOKEN
-
-# For a different sandbox
-bash scripts/telegram-setup.sh --token YOUR_BOT_TOKEN --sandbox my-assistant
+# During onboarding, NemoClaw prompts for credentials
+# Or re-run onboarding to add Telegram token
+nemoclaw onboard
 ```
 
-The script will:
-- ✓ Save your bot token securely
-- ✓ Find NemoClaw installation
-- ✓ Create systemd service (auto-start on reboot)
-- ✓ Start the Telegram bridge
-- ✓ Verify everything is working
+**Option B: Manual Setup**
+```bash
+# Create credentials file
+mkdir -p ~/.nemoclaw
+cat > ~/.nemoclaw/credentials.json << EOF
+{
+  "TELEGRAM_BOT_TOKEN": "YOUR_BOT_TOKEN_HERE"
+}
+EOF
+
+# Restrict permissions
+chmod 600 ~/.nemoclaw/credentials.json
+```
+
+**Start Telegram Services:**
+
+```bash
+# Start all auxiliary services (Telegram, tunnels, etc.)
+nemoclaw start
+
+# Check service status
+nemoclaw status
+
+# View logs
+nemoclaw debug
+```
 
 **Start Chatting:**
 
-Find your bot in Telegram (search by the name you gave it) and start messaging!
+Find your bot in Telegram (search by the name you gave it) and start messaging! Messages are automatically forwarded to your NemoClaw sandbox.
 
 **Useful Commands:**
 
 ```bash
-# View logs
-bash scripts/telegram-setup.sh --logs
+# Check what's running
+nemoclaw status
 
-# Stop bridge
-bash scripts/telegram-setup.sh --stop
+# Stop all services
+nemoclaw stop
 
-# Restart bridge
-bash scripts/telegram-setup.sh --restart
+# View full diagnostics
+nemoclaw debug
 
-# Check systemd service status
-systemctl status nemoclaw-telegram.service
+# View credentials (safely stored)
+cat ~/.nemoclaw/credentials.json
 ```
 
 ### 6. (Optional) Start Supporting Services
