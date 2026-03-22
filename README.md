@@ -98,7 +98,7 @@ bash scripts/setup.sh
 
 ### 3. Official NVIDIA NemoClaw Installer
 
-Once foundational setup completes, the official NVIDIA installer will:
+Once foundational setup completes, the official NVIDIA installer will run:
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
@@ -110,6 +110,21 @@ This installer:
 3. Runs interactive onboarding
 4. Creates your first sandbox
 5. Asks for NVIDIA API key (free tier available at https://build.nvidia.com/)
+
+**Important:** Before running onboarding, source your `.env` file:
+
+```bash
+# Load environment variables
+source .env
+
+# Verify API key is set
+echo $NVIDIA_API_KEY
+
+# Now run onboarding
+nemoclaw onboard
+```
+
+If API key is not loaded, onboarding will fail at step [6/7] with "sandbox not found" error.
 
 ### 4. Start Using NemoClaw
 
@@ -154,57 +169,60 @@ When the installer asks about policy presets, select **only `telegram`**. Skip a
 
 NemoClaw stores credentials in `~/.nemoclaw/credentials.json`. Add your bot token:
 
-**Option A: Interactive Setup**
 ```bash
-# During onboarding, NemoClaw prompts for credentials
-# Or re-run onboarding to add Telegram token
-nemoclaw onboard
-```
-
-**Option B: Manual Setup**
-```bash
-# Create credentials file
-mkdir -p ~/.nemoclaw
+# Create credentials file with both tokens
 cat > ~/.nemoclaw/credentials.json << EOF
 {
-  "TELEGRAM_BOT_TOKEN": "YOUR_BOT_TOKEN_HERE"
+  "TELEGRAM_BOT_TOKEN": "YOUR_BOT_TOKEN_HERE",
+  "NVIDIA_API_KEY": "YOUR_NVIDIA_API_KEY_HERE"
 }
 EOF
 
-# Restrict permissions
+# Restrict permissions (important - contains secrets)
 chmod 600 ~/.nemoclaw/credentials.json
 ```
 
 **Start Telegram Services:**
 
+NemoClaw reads credentials from the file but needs the token in the **environment** to start:
+
 ```bash
-# Start all auxiliary services (Telegram, tunnels, etc.)
+# Export token from credentials file
+export TELEGRAM_BOT_TOKEN=$(grep -o '"TELEGRAM_BOT_TOKEN":"[^"]*"' ~/.nemoclaw/credentials.json | cut -d'"' -f4)
+
+# Verify it's set
+echo $TELEGRAM_BOT_TOKEN
+
+# Start services
 nemoclaw start
+```
 
-# Check service status
-nemoclaw status
-
-# View logs
-nemoclaw debug
+You should see:
+```
+telegram-bridge started (PID xxxxx)
+  ┌─────────────────────────────────────────────────────┐
+  │  NemoClaw Services                                  │
+  │  Telegram:    bridge running                        │
+  └─────────────────────────────────────────────────────┘
 ```
 
 **Start Chatting:**
 
-Find your bot in Telegram (search by the name you gave it) and start messaging! Messages are automatically forwarded to your NemoClaw sandbox.
+Find your bot in Telegram (search by the name you gave it) and send a message! It will be forwarded to your NemoClaw sandbox.
 
 **Useful Commands:**
 
 ```bash
-# Check what's running
+# Check service status
 nemoclaw status
 
 # Stop all services
 nemoclaw stop
 
-# View full diagnostics
+# View diagnostics
 nemoclaw debug
 
-# View credentials (safely stored)
+# Check credentials were saved
 cat ~/.nemoclaw/credentials.json
 ```
 
@@ -537,6 +555,8 @@ See [OPERATIONS.md](docs/OPERATIONS.md#setup-and-destroy-reference) for detailed
 ## For Detailed Information
 
 - [OPERATIONS.md](docs/OPERATIONS.md) — Day-to-day tasks, monitoring, troubleshooting
+- [STORAGE.md](docs/STORAGE.md) — Where data is stored, backup locations, persistence
+- [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — Common issues and solutions
 - [BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md) — Backup procedures and disaster recovery
 - [README.md](#quick-start) — This file (architecture and setup)
 

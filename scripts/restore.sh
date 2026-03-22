@@ -5,6 +5,12 @@
 #
 # Restores NemoClaw from a backup tarball created by backup.sh
 #
+# Restores:
+#   - NemoClaw credentials & sandbox registry (~/.nemoclaw/)
+#   - OpenShell Docker volume (openshell.db with soul.md, conversations)
+#   - Ollama models (if included in backup)
+#   - Service logs (if included in backup)
+#
 # Steps:
 #   1. Verifies backup integrity
 #   2. Stops running services
@@ -222,19 +228,47 @@ verify_restoration() {
     local checks_passed=0
     local checks_total=0
     
-    # Check directories exist
-    for dir in "$CONFIG_DIR" "$MODELS_DIR"; do
-        checks_total=$((checks_total + 1))
-        if [[ -d "$dir" ]]; then
-            local file_count=$(find "$dir" -type f 2>/dev/null | wc -l)
-            log_success "✓ $dir restored ($file_count files)"
-            checks_passed=$((checks_passed + 1))
-        else
-            log_warn "✗ $dir not restored"
-        fi
-    done
+    # Check critical files exist
+    log_info "Critical data:"
     
-    log_info "Verification: $checks_passed / $checks_total checks passed"
+    checks_total=$((checks_total + 1))
+    if [[ -f ~/.nemoclaw/credentials.json ]]; then
+        log_success "✓ ~/.nemoclaw/credentials.json restored"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "✗ ~/.nemoclaw/credentials.json not found"
+    fi
+    
+    checks_total=$((checks_total + 1))
+    if [[ -f ~/.nemoclaw/sandboxes.json ]]; then
+        log_success "✓ ~/.nemoclaw/sandboxes.json restored"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "✗ ~/.nemoclaw/sandboxes.json not found"
+    fi
+    
+    # Check Docker volume restoration
+    log_info "Docker volumes:"
+    local openshell_volume="/var/lib/docker/volumes/openshell-cluster-nemoclaw/_data"
+    checks_total=$((checks_total + 1))
+    if [[ -f "$openshell_volume/storage/pvc-"*/openshell.db ]]; then
+        log_success "✓ Docker volume openshell-cluster-nemoclaw restored"
+        log_success "  (openshell.db with soul.md, conversations)"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "✗ Docker volume openshell-cluster-nemoclaw not fully restored"
+    fi
+    
+    # Check optional directories
+    log_info "Optional data:"
+    
+    if [[ -d "$MODELS_DIR" ]] && [[ -n "$(find "$MODELS_DIR" -type f 2>/dev/null)" ]]; then
+        log_success "✓ Models directory restored"
+    else
+        log_info "○ Models directory not present (expected if using NVIDIA API only)"
+    fi
+    
+    log_info "Verification: $checks_passed / $checks_total critical checks passed"
     
     if [[ $checks_passed -gt 0 ]]; then
         return 0

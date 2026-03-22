@@ -116,6 +116,33 @@ bash scripts/setup.sh
 
 ## Starting Services
 
+### Telegram Bridge (Optional)
+
+If you added Telegram policy during onboarding, start the bridge:
+
+```bash
+# Export token from credentials file
+export TELEGRAM_BOT_TOKEN=$(grep -o '"TELEGRAM_BOT_TOKEN":"[^"]*"' ~/.nemoclaw/credentials.json | cut -d'"' -f4)
+
+# Verify it's set
+echo $TELEGRAM_BOT_TOKEN
+
+# Start all services (including Telegram)
+nemoclaw start
+
+# Verify bridge is running
+nemoclaw status
+# Should show: Telegram: bridge running
+```
+
+**To stop Telegram:**
+```bash
+nemoclaw stop
+```
+
+**Troubleshooting Telegram:**
+See [TROUBLESHOOTING.md](../TROUBLESHOOTING.md#telegram-bridge-issues)
+
 ### Initial Boot (After Installation)
 
 ```bash

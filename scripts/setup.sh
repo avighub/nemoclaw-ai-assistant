@@ -335,6 +335,26 @@ EOF
     log_success "Systemd service configured"
 }
 
+# Setup backup cron job
+setup_backup_cron() {
+    log_info "Setting up backup cron job..."
+    
+    local backup_time="${BACKUP_TIME:-02:00}"
+    local backup_hour=$(echo "$backup_time" | cut -d: -f1)
+    local backup_minute=$(echo "$backup_time" | cut -d: -f2)
+    
+    # Create cron job for daily backups
+    local cron_entry="$backup_minute $backup_hour * * * cd $PROJECT_ROOT && bash scripts/backup.sh >> /var/log/nemoclaw-backup.log 2>&1"
+    
+    # Remove existing nemoclaw backup cron entries
+    (crontab -u "$NEMOCLAW_USER" -l 2>/dev/null | grep -v "backup.sh" | crontab -u "$NEMOCLAW_USER" -) || true
+    
+    # Add new cron entry
+    (crontab -u "$NEMOCLAW_USER" -l 2>/dev/null; echo "$cron_entry") | crontab -u "$NEMOCLAW_USER" -
+    
+    log_success "Backup cron job configured ($backup_time UTC daily)"
+}
+
 # Verify installation
 verify_installation() {
     log_info "Verifying installation..."
@@ -464,6 +484,7 @@ main() {
     # Configure
     create_directories
     setup_systemd_service
+    setup_backup_cron
     
     # Verify
     verify_installation

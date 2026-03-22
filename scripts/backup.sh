@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# NemoClaw Backup Script
+# NemoClaw Backup Script (Optimized)
 #
-# Creates compressed tarball backup of:
-#   - NemoClaw configuration and state
-#   - Local Ollama models (if enabled)
-#   - OpenShell gateway configuration
-#   - Service logs
-#   - Docker volumes
+# Creates compressed tarball backup of critical NemoClaw data:
+#   - NemoClaw registry & credentials (~/.nemoclaw/)
+#   - OpenShell Docker volume (contains openshell.db with soul.md, conversations)
+#   - Ollama models (optional, only if they exist)
+#   - Service logs (optional, can skip)
 #
-# Automatically removes old backups based on retention policy
+# Smart features:
+#   - Only backs up directories that have content
+#   - Skips empty directories automatically
+#   - Configurable with --no-* flags
+#   - Shows exactly what will be backed up before creating
 #
 # Usage: bash scripts/backup.sh [--help]
 ##############################################################################
@@ -24,16 +27,19 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Configuration (load from environment or defaults)
-CONFIG_DIR="${CONFIG_DIR:-/srv/nemoclaw/config}"
-MODELS_DIR="${MODELS_DIR:-/srv/nemoclaw/models}"
-LOGS_DIR="${LOGS_DIR:-/srv/nemoclaw/logs}"
+# Configuration
 BACKUP_DIR="${BACKUP_DIR:-/srv/nemoclaw/backups}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
-
 BACKUP_TIMESTAMP=$(date -u +'%Y-%m-%d-%H-%M-%S')
 BACKUP_FILE="$BACKUP_DIR/nemoclaw-backup-$BACKUP_TIMESTAMP.tar.gz"
 BACKUP_MANIFEST="$BACKUP_DIR/nemoclaw-backup-$BACKUP_TIMESTAMP.manifest"
+
+# Options (can be overridden by flags)
+INCLUDE_MODELS="true"
+INCLUDE_LOGS="true"
+VERBOSE="false"
+DRY_RUN="false"
+CLEANUP="true"
 
 ##############################################################################
 # Helper Functions
@@ -59,74 +65,155 @@ usage() {
     cat << EOF
 Usage: bash scripts/backup.sh [OPTIONS]
 
-Creates a compressed backup of all NemoClaw data and configuration.
+Creates optimized backup of critical NemoClaw data (skips empty directories).
+
+Always backed up:
+  - ~/.nemoclaw/                                    (credentials, sandbox registry)
+  - Docker volume openshell-cluster-nemoclaw       (contains openshell.db with soul.md, conversations)
+
+Conditionally backed up:
+  - /srv/nemoclaw/models/                         (only if contains Ollama models)
+  - /srv/nemoclaw/logs/                           (optional, can skip with --no-logs)
 
 Options:
-  --help              Show this help message
-  --retention DAYS    Override backup retention (default: 30 days)
-  --no-cleanup        Don't remove old backups
-  --verbose           Enable verbose tar output
-  --list              List all existing backups
-  --test              Dry-run (show what would be backed up)
+  --help                Show this help message
+  --list                List all existing backups
+  --test                Show what would be backed up (dry-run)
+  --verbose             Show verbose tar output
+  --no-models           Don't backup Ollama models (if present)
+  --no-logs             Don't backup service logs
+  --no-cleanup          Don't remove old backups
+  --retention DAYS      Override retention (default: 30 days)
 
 Examples:
-  bash scripts/backup.sh
-  bash scripts/backup.sh --verbose
-  bash scripts/backup.sh --retention 60
-  bash scripts/backup.sh --list
+  bash scripts/backup.sh                          # Full backup
+  bash scripts/backup.sh --test                   # Preview what would backup
+  bash scripts/backup.sh --no-models              # Skip models (if using Ollama)
+  bash scripts/backup.sh --no-logs --no-models    # Minimal backup
+  bash scripts/backup.sh --list                   # List existing backups
 EOF
     exit 0
 }
 
-# Verify directories exist
-verify_directories() {
-    local missing=()
+# Check if directory has content (not empty)
+has_content() {
+    local dir="$1"
     
-    for dir in "$CONFIG_DIR" "$MODELS_DIR" "$LOGS_DIR"; do
-        if [[ ! -d "$dir" ]]; then
-            log_warn "Directory not found: $dir (will create if needed during restore)"
-        fi
-    done
-    
-    if [[ ! -d "$BACKUP_DIR" ]]; then
-        log_info "Creating backup directory: $BACKUP_DIR"
-        mkdir -p "$BACKUP_DIR"
+    if [[ ! -d "$dir" ]]; then
+        return 1  # Directory doesn't exist
     fi
-}
-
-# Stop running services (optional, to ensure consistent state)
-stop_services() {
-    log_info "Pausing services for consistent backup..."
     
-    # Try graceful stop
-    docker compose pause 2>/dev/null || true
-    sleep 2
+    # Check if directory has any files
+    if [[ -z "$(find "$dir" -type f 2>/dev/null)" ]]; then
+        return 1  # Directory is empty
+    fi
+    
+    return 0  # Directory has content
 }
 
-# Resume services
-resume_services() {
-    log_info "Resuming services..."
-    docker compose unpause 2>/dev/null || true
+# Build list of directories to backup
+build_backup_list() {
+    local -a backup_items=()
+    
+    log_info "Determining what to backup..." >&2
+    echo "" >&2
+    
+    # Always backup: credentials and sandbox registry
+    log_info "Critical data:" >&2
+    if [[ -f ~/.nemoclaw/credentials.json ]]; then
+        backup_items+=("~/.nemoclaw/credentials.json")
+        log_info "  ✓ ~/.nemoclaw/credentials.json" >&2
+    fi
+    
+    if [[ -f ~/.nemoclaw/sandboxes.json ]]; then
+        backup_items+=("~/.nemoclaw/sandboxes.json")
+        log_info "  ✓ ~/.nemoclaw/sandboxes.json" >&2
+    fi
+    
+    # Sandbox state (in Docker volume, contains soul.md, conversations, etc.)
+    local openshell_volume="/var/lib/docker/volumes/openshell-cluster-nemoclaw/_data"
+    if [[ -d "$openshell_volume" ]]; then
+        backup_items+=("$openshell_volume")
+        local volume_size=$(du -sh "$openshell_volume" 2>/dev/null | cut -f1)
+        log_info "  ✓ Docker volume openshell-cluster-nemoclaw ($volume_size)" >&2
+        log_info "    (contains openshell.db with soul.md, conversations, sandbox state)" >&2
+    else
+        log_warn "  ○ Docker volume not found (OpenShell may not be running)" >&2
+    fi
+    
+    echo "" >&2
+    
+    # Optional: Models
+    if [[ "$INCLUDE_MODELS" == "true" ]]; then
+        log_info "Optional data:" >&2
+        if has_content "/srv/nemoclaw/models"; then
+            backup_items+=("/srv/nemoclaw/models")
+            local model_size=$(du -sh "/srv/nemoclaw/models" 2>/dev/null | cut -f1)
+            log_info "  ✓ /srv/nemoclaw/models ($model_size)" >&2
+        else
+            log_info "  ○ /srv/nemoclaw/models (empty, skipping)" >&2
+        fi
+    else
+        log_info "Optional data:" >&2
+        log_info "  ○ /srv/nemoclaw/models (--no-models flag)" >&2
+    fi
+    
+    # Optional: Logs
+    if [[ "$INCLUDE_LOGS" == "true" ]]; then
+        if has_content "/srv/nemoclaw/logs"; then
+            backup_items+=("/srv/nemoclaw/logs")
+            log_info "  ✓ /srv/nemoclaw/logs" >&2
+        else
+            log_info "  ○ /srv/nemoclaw/logs (empty, skipping)" >&2
+        fi
+    else
+        log_info "  ○ /srv/nemoclaw/logs (--no-logs flag)" >&2
+    fi
+    
+    echo "" >&2
+    
+    # Return the array as string (bash doesn't return arrays)
+    # Output to stdout (will be captured by $(build_backup_list))
+    printf '%s\n' "${backup_items[@]}"
 }
 
 # Create backup tarball
 create_backup() {
+    local -a backup_items=()
+    
+    log_info "Calculating backup size..."
+    
+    # Read backup items from stdin
+    while IFS= read -r item; do
+        backup_items+=("$item")
+    done
+    
+    if [[ ${#backup_items[@]} -eq 0 ]]; then
+        log_error "No data to backup!"
+        exit 1
+    fi
+    
+    # Ensure backup directory exists
+    mkdir -p "$BACKUP_DIR"
+    
+    # Build tar command
+    local tar_opts="-czf"
+    [[ "$VERBOSE" == "true" ]] && tar_opts="-czvf"
+    
     log_info "Creating backup: $BACKUP_FILE"
     
-    local tar_opts="-czf"
-    [[ "${VERBOSE:-false}" == "true" ]] && tar_opts="-czvf"
+    # Create backup (expand items, handling home directory correctly)
+    local expanded_items=()
+    for item in "${backup_items[@]}"; do
+        expanded_items+=("${item/#\~/$HOME}")
+    done
     
-    # Create backup with all necessary directories
     tar $tar_opts "$BACKUP_FILE" \
         --exclude='*.log' \
         --exclude='__pycache__' \
         --exclude='.git' \
         --exclude='node_modules' \
-        --exclude='.venv' \
-        --transform='s|^/srv/nemoclaw|nemoclaw-data|' \
-        "$CONFIG_DIR" \
-        "$MODELS_DIR" \
-        "$LOGS_DIR" \
+        "${expanded_items[@]}" \
         2>&1 || {
         log_error "Backup creation failed"
         return 1
@@ -136,7 +223,7 @@ create_backup() {
     log_success "Backup created: $BACKUP_FILE ($backup_size)"
 }
 
-# Create manifest file (for integrity verification)
+# Create manifest
 create_manifest() {
     log_info "Creating backup manifest..."
     
@@ -152,17 +239,21 @@ create_manifest() {
         tar -tzf "$BACKUP_FILE" | head -20
         echo "... ($(tar -tzf "$BACKUP_FILE" | wc -l) total files)"
         echo ""
-        echo "Configuration Directory: $CONFIG_DIR"
-        echo "Models Directory: $MODELS_DIR"
-        echo "Logs Directory: $LOGS_DIR"
+        echo "Included:"
+        echo "  - ~/.nemoclaw/ (credentials, sandbox registry)"
+        echo "  - Docker volume openshell-cluster-nemoclaw (contains openshell.db)"
+        echo "    └── soul.md, conversations, sandbox state"
+        if [[ "$INCLUDE_MODELS" == "true" ]]; then
+            echo "  - /srv/nemoclaw/models/ (if present)"
+        fi
+        if [[ "$INCLUDE_LOGS" == "true" ]]; then
+            echo "  - /srv/nemoclaw/logs/ (if present)"
+        fi
         echo ""
         echo "System Information:"
         echo "  Hostname: $(hostname)"
-        echo "  OS: $(lsb_release -d | cut -f2)"
+        echo "  OS: $(lsb_release -d 2>/dev/null | cut -f2 || echo 'Unknown')"
         echo "  Kernel: $(uname -r)"
-        echo ""
-        echo "Service Status:"
-        docker compose ps 2>/dev/null || echo "  Docker Compose: not running"
         echo ""
         echo "Retention: Keep for $BACKUP_RETENTION_DAYS days"
     } > "$BACKUP_MANIFEST"
@@ -170,11 +261,11 @@ create_manifest() {
     log_success "Manifest created: $BACKUP_MANIFEST"
 }
 
-# Cleanup old backups based on retention policy
+# Cleanup old backups
 cleanup_old_backups() {
     log_info "Cleaning up backups older than $BACKUP_RETENTION_DAYS days..."
     
-    local count_before=$(ls -1 "$BACKUP_DIR"/nemoclaw-backup-*.tar.gz 2>/dev/null | wc -l)
+    local count_before=$(ls -1 "$BACKUP_DIR"/nemoclaw-backup-*.tar.gz 2>/dev/null | wc -l || echo 0)
     
     # Find and delete old backups
     find "$BACKUP_DIR" -name "nemoclaw-backup-*.tar.gz" -mtime "+$BACKUP_RETENTION_DAYS" -delete 2>/dev/null || true
@@ -190,103 +281,26 @@ cleanup_old_backups() {
     fi
 }
 
-# List all backups
+# List backups
 list_backups() {
     log_info "Existing backups:"
     echo ""
     
-    if [[ ! -d "$BACKUP_DIR" ]]; then
-        log_warn "No backup directory found"
-        return 0
-    fi
-    
-    local backups=$(ls -lh "$BACKUP_DIR"/nemoclaw-backup-*.tar.gz 2>/dev/null | wc -l)
-    
-    if [[ $backups -eq 0 ]]; then
+    if [[ ! -d "$BACKUP_DIR" ]] || [[ -z "$(ls -1 "$BACKUP_DIR"/nemoclaw-backup-*.tar.gz 2>/dev/null)" ]]; then
         log_warn "No backups found in $BACKUP_DIR"
         return 0
     fi
     
-    # Print table header
-    printf "%-40s %-12s %-19s %-10s\n" "Backup File" "Size" "Created" "Age"
-    printf "%s\n" "────────────────────────────────────────────────────────────────────────────────"
-    
-    # List backups with age calculation
-    ls -1t "$BACKUP_DIR"/nemoclaw-backup-*.tar.gz 2>/dev/null | while read -r backup; do
-        local filename=$(basename "$backup")
-        local size=$(du -h "$backup" | cut -f1)
-        local mtime=$(stat -c %y "$backup" | cut -d' ' -f1,2)
-        local timestamp=$(echo "$filename" | sed 's/nemoclaw-backup-//;s/.tar.gz//')
-        
-        # Calculate age
-        local backup_epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
-        local current_epoch=$(date +%s)
-        local age_seconds=$((current_epoch - backup_epoch))
-        local age_hours=$((age_seconds / 3600))
-        
-        if [[ $age_hours -lt 24 ]]; then
-            age="${age_hours}h"
-        elif [[ $age_hours -lt 720 ]]; then
-            age="$((age_hours / 24))d"
-        else
-            age="$((age_hours / 720))w"
-        fi
-        
-        printf "%-40s %-12s %-19s %-10s\n" "$filename" "$size" "$timestamp" "$age"
-    done
+    ls -lh "$BACKUP_DIR"/nemoclaw-backup-*.tar.gz | awk '{
+        print "  " $9 " (" $5 ")"
+    }'
     
     echo ""
-    local total=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
-    log_info "Total backup storage: $total"
-}
-
-# Verify backup integrity
-verify_backup() {
-    log_info "Verifying backup integrity..."
-    
-    if ! tar -tzf "$BACKUP_FILE" > /dev/null 2>&1; then
-        log_error "Backup verification failed - tarball is corrupted"
-        return 1
-    fi
-    
-    log_success "Backup integrity verified"
-}
-
-# Send notification (if configured)
-send_notification() {
-    local status="$1"
-    local message="$2"
-    
-    # This is a placeholder for email/webhook notifications
-    # Implement based on your notification preferences
-    
-    if [[ "${NOTIFICATIONS_ENABLED:-false}" == "true" ]]; then
-        log_info "Would send notification: $status - $message"
-        # TODO: Implement notification mechanism
-    fi
-}
-
-# Test mode (show what would be backed up)
-test_backup() {
-    log_info "Test mode - showing what would be backed up:"
-    echo ""
-    
-    log_info "Configuration Directory:"
-    find "$CONFIG_DIR" -type f 2>/dev/null | head -10 || log_warn "  (empty or not found)"
-    
-    log_info "Models Directory:"
-    find "$MODELS_DIR" -type f 2>/dev/null | head -10 || log_warn "  (empty or not found)"
-    
-    log_info "Logs Directory:"
-    find "$LOGS_DIR" -type f 2>/dev/null | head -10 || log_warn "  (empty or not found)"
-    
-    echo ""
-    log_info "Estimated backup size:"
-    du -sh "$CONFIG_DIR" "$MODELS_DIR" "$LOGS_DIR" 2>/dev/null || echo "  (cannot estimate)"
+    log_info "To restore: bash scripts/restore.sh <backup-file>"
 }
 
 ##############################################################################
-# Main Backup Flow
+# Main
 ##############################################################################
 
 main() {
@@ -294,59 +308,57 @@ main() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --help) usage ;;
+            --list) list_backups; exit 0 ;;
+            --test) DRY_RUN="true"; shift ;;
+            --verbose) VERBOSE="true"; shift ;;
+            --no-models) INCLUDE_MODELS="false"; shift ;;
+            --no-logs) INCLUDE_LOGS="false"; shift ;;
+            --no-cleanup) CLEANUP="false"; shift ;;
             --retention) BACKUP_RETENTION_DAYS="$2"; shift 2 ;;
-            --no-cleanup) NO_CLEANUP=true; shift ;;
-            --verbose) VERBOSE=true; shift ;;
-            --list) LIST_MODE=true; shift ;;
-            --test) TEST_MODE=true; shift ;;
             *) log_error "Unknown option: $1"; usage ;;
         esac
     done
     
-    log_info "═════════════════════════════════════════════════════════"
-    log_info "NemoClaw Backup"
-    log_info "═════════════════════════════════════════════════════════"
+    log_info "═══════════════════════════════════════════════════════════"
+    log_info "NemoClaw Backup (Optimized)"
+    log_info "═══════════════════════════════════════════════════════════"
+    echo ""
     
-    # List mode
-    if [[ "${LIST_MODE:-false}" == "true" ]]; then
-        list_backups
-        exit 0
-    fi
+    # Build list of what to backup
+    local backup_list
+    backup_list=$(build_backup_list)
     
-    # Test mode
-    if [[ "${TEST_MODE:-false}" == "true" ]]; then
-        test_backup
-        exit 0
-    fi
+    echo ""
     
-    # Normal backup flow
-    verify_directories
-    stop_services
-    
-    if create_backup; then
-        create_manifest
-        verify_backup
-        
-        if [[ "${NO_CLEANUP:-false}" != "true" ]]; then
-            cleanup_old_backups
-        fi
-        
+    # Dry-run mode
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_info "DRY-RUN: Would backup the above items"
         echo ""
-        log_success "Backup completed successfully!"
-        log_info "Backup location: $BACKUP_FILE"
-        log_info "Retention: $BACKUP_RETENTION_DAYS days"
-        
-        send_notification "SUCCESS" "Backup completed: $BACKUP_TIMESTAMP"
+        log_info "To actually create backup, run:"
+        log_info "  bash scripts/backup.sh"
         exit 0
-    else
-        log_error "Backup failed!"
-        send_notification "FAILURE" "Backup failed at $BACKUP_TIMESTAMP"
-        exit 1
     fi
+    
+    # Create backup
+    echo "$backup_list" | create_backup
+    
+    echo ""
+    
+    # Create manifest
+    create_manifest
+    
+    echo ""
+    
+    # Cleanup old backups
+    if [[ "$CLEANUP" == "true" ]]; then
+        cleanup_old_backups
+    else
+        log_info "Skipping cleanup (--no-cleanup flag)"
+    fi
+    
+    echo ""
+    log_success "Backup completed successfully!"
 }
-
-# Ensure services are resumed on exit
-trap "resume_services" EXIT
 
 # Run main
 main "$@"
