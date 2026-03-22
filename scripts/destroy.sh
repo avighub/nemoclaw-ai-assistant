@@ -86,39 +86,52 @@ EOF
 
 # Print what will be destroyed
 print_destruction_plan() {
-    local docker_status="✗ docker installation"
-    local nodejs_status="✗ Node.js installation"
-    
+    # Determine mode label
+    local mode_label
+    if [[ "${KEEP_DOCKER:-false}" == "true" && "${KEEP_NODEJS:-false}" == "true" ]]; then
+        mode_label="PARTIAL DESTRUCTION — Keeping Docker + Node.js"
+    elif [[ "${KEEP_DOCKER:-false}" == "true" ]]; then
+        mode_label="PARTIAL DESTRUCTION — Keeping Docker"
+    elif [[ "${KEEP_NODEJS:-false}" == "true" ]]; then
+        mode_label="PARTIAL DESTRUCTION — Keeping Node.js"
+    else
+        mode_label="FULL DESTRUCTION"
+    fi
+
+    echo ""
+    echo -e "${RED}═══ ${mode_label} ═══${NC}"
+    echo ""
+    echo "Removing:"
+    echo -e "  ${RED}✗${NC} NemoClaw services         — systemd unit, OpenShell gateway"
+    echo -e "  ${RED}✗${NC} Docker containers/images  — all containers, images, networks, volumes"
+
     if [[ "${KEEP_DOCKER:-false}" == "true" ]]; then
-        docker_status="✓ docker installation (KEEPING)"
+        echo -e "  ${GREEN}✓${NC} Docker installation       — KEEPING (binary/daemon preserved)"
+    else
+        echo -e "  ${RED}✗${NC} Docker installation       — will be purged (apt-get purge)"
     fi
-    
+
     if [[ "${KEEP_NODEJS:-false}" == "true" ]]; then
-        nodejs_status="✓ Node.js installation (KEEPING)"
+        echo -e "  ${GREEN}✓${NC} Node.js installation      — KEEPING (binary preserved)"
+    else
+        echo -e "  ${RED}✗${NC} Node.js installation      — will be purged (apt-get purge)"
     fi
-    
-    cat << EOF
 
-$( echo -e "${RED}═══ COMPLETE DESTRUCTION PLAN ═══${NC}" )
-
-This will PERMANENTLY REMOVE:
-  ✗ NemoClaw services (systemd, OpenShell gateway)
-  $docker_status
-  $nodejs_status
-  ✗ OpenShell (pip3 package)
-  ✗ /srv/nemoclaw/ (config, models, backups, logs)
-  ✗ Docker containers, images, networks, volumes
-  ✗ Cron jobs (backup runner)
-
-Server state after:
-  → Clean, as it was BEFORE setup.sh
-  → Ready for fresh setup.sh or other uses
-  → Vendor-agnostic (no VPS provider features needed)
-
-$( echo -e "${YELLOW}⚠️  Make sure you have backed up!${NC}" )
-  bash scripts/backup.sh  # Run THIS before destroying
-
-EOF
+    echo -e "  ${RED}✗${NC} OpenShell                 — pip3 package + binary"
+    echo -e "  ${RED}✗${NC} /srv/nemoclaw/            — config, models, backups, logs"
+    echo -e "  ${RED}✗${NC} Cron jobs                 — backup runner"
+    echo -e "  ${RED}✗${NC} nemoclaw user             — system user + home directory"
+    echo ""
+    echo "Server state after:"
+    echo "  → NemoClaw fully removed"
+    if [[ "${KEEP_DOCKER:-false}" == "true" || "${KEEP_NODEJS:-false}" == "true" ]]; then
+        echo "  → Selected packages preserved (see above)"
+    fi
+    echo "  → Ready for fresh setup.sh or other uses"
+    echo ""
+    echo -e "${YELLOW}⚠️  Make sure you have backed up!${NC}"
+    echo "  bash scripts/backup.sh  # Run THIS before destroying"
+    echo ""
 }
 
 # Confirmation prompt
@@ -127,11 +140,20 @@ confirm_destruction() {
         log_warn "Proceeding without confirmation (--yes flag)"
         return 0
     fi
-    
+
     print_destruction_plan
-    
-    read -p "Type 'destroy' to confirm complete removal: " -r response
-    
+
+    local prompt_label="complete removal"
+    if [[ "${KEEP_DOCKER:-false}" == "true" && "${KEEP_NODEJS:-false}" == "true" ]]; then
+        prompt_label="partial removal (keeping Docker + Node.js)"
+    elif [[ "${KEEP_DOCKER:-false}" == "true" ]]; then
+        prompt_label="partial removal (keeping Docker)"
+    elif [[ "${KEEP_NODEJS:-false}" == "true" ]]; then
+        prompt_label="partial removal (keeping Node.js)"
+    fi
+
+    read -p "Type 'destroy' to confirm ${prompt_label}: " -r response
+
     if [[ "$response" != "destroy" ]]; then
         log_warn "Destruction cancelled"
         exit 0

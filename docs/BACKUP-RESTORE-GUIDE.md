@@ -116,7 +116,7 @@ Backups run **daily at 2:00 AM UTC**, configured in `.env`:
 ```bash
 BACKUP_ENABLED="true"
 BACKUP_TIME="02:00"
-BACKUP_RETENTION_DAYS="30"
+BACKUP_RETENTION_DAYS="7"
 ```
 
 **Cron entry created by `setup.sh`:**
@@ -392,7 +392,7 @@ fi
 
 ```bash
 # In .env
-BACKUP_RETENTION_DAYS="30"
+BACKUP_RETENTION_DAYS="7"
 ```
 
 Backups older than the retention period are deleted after each `backup.sh` run and daily via cron.

@@ -138,7 +138,7 @@ services:
       - CONFIG_DIR=/config
       - MODELS_DIR=/models
       - LOGS_DIR=/logs
-      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-10}
     
     # Daily backup at 02:00 UTC using busybox cron
     entrypoint: |

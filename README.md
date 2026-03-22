@@ -460,11 +460,11 @@ bash scripts/restore.sh <latest-backup>
 ### Scenario: Need Fresh Start
 
 ```bash
-# Destroy all (keeps /srv/nemoclaw/)
-bash scripts/destroy.sh --yes
+# Destroy all, but keeps docker and nodejs for faster reinstall
+bash scripts/destroy.sh --keep-docker-nodejs
 
-# Verify nothing is running
-docker compose ps
+# Destroys all and verifies the same
+bash scripts/destroy.sh
 
 # Reinstall
 bash scripts/setup.sh
