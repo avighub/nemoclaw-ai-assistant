@@ -244,7 +244,7 @@ install_nodejs() {
     log_success "npm installed: $(npm --version)"
 }
 
-# Install OpenShell CLI
+# Install OpenShell CLI via pip3
 install_openshell() {
     if command -v openshell &> /dev/null; then
         log_info "OpenShell already installed"
@@ -253,18 +253,45 @@ install_openshell() {
     
     log_info "Installing OpenShell..."
     
-    # Try to install via Python wheel (more compatible than musl binary)
-    if command -v pip3 &> /dev/null; then
-        local latest_release=$(curl -s https://api.github.com/repos/NVIDIA/OpenShell/releases/latest | jq -r '.tag_name')
-        local wheel_url="https://github.com/NVIDIA/OpenShell/releases/download/${latest_release}/openshell-${latest_release#v}-py3-none-manylinux_2_39_x86_64.whl"
-        
-        if pip3 install "$wheel_url" 2>/dev/null; then
-            log_success "OpenShell installed via pip"
+    # Ensure pip3 is available
+    if ! command -v pip3 &> /dev/null; then
+        log_info "Installing pip3..."
+        apt-get install -y python3-pip
+    fi
+    
+    # Get latest release version
+    local latest_release=$(curl -s https://api.github.com/repos/NVIDIA/OpenShell/releases/latest | jq -r '.tag_name')
+    local version="${latest_release#v}"  # Remove 'v' prefix (v0.0.13 -> 0.0.13)
+    local wheel_url="https://github.com/NVIDIA/OpenShell/releases/download/${latest_release}/openshell-${version}-py3-none-manylinux_2_39_x86_64.whl"
+    
+    log_info "Downloading from: $wheel_url"
+    
+    # Install via pip3 with explicit --break-system-packages flag for Debian/Ubuntu
+    if pip3 install --break-system-packages "$wheel_url" 2>&1 | grep -q "Successfully installed"; then
+        # Verify installation
+        if command -v openshell &> /dev/null; then
+            log_success "OpenShell installed successfully via pip3"
             return 0
         fi
     fi
     
-    log_warn "Could not install OpenShell (will be installed by NemoClaw during onboarding)"
+    # If pip install failed, try direct download (fallback)
+    log_warn "pip3 installation failed, trying direct download..."
+    
+    local temp_dir=$(mktemp -d)
+    if curl -fsSL "$wheel_url" -o "$temp_dir/openshell.whl" 2>/dev/null; then
+        pip3 install --break-system-packages "$temp_dir/openshell.whl" 2>/dev/null || true
+        rm -rf "$temp_dir"
+    fi
+    
+    # Final check
+    if command -v openshell &> /dev/null; then
+        log_success "OpenShell installed"
+        return 0
+    else
+        log_warn "Could not install OpenShell (will be installed by NemoClaw during onboarding)"
+        return 0
+    fi
 }
 
 # Install NemoClaw via npm
